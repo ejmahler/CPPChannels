@@ -1,6 +1,6 @@
 CPPChannels
 ===========
-This is a really imple implementation of go channels in C++, using all sorts of fancy C++11 features. A channel is essentially a queue designed for inter-thread communcation.
+This is a simple implementation of go channels in C++, using all sorts of fancy C++11 features. A channel is essentially a queue designed for inter-thread communcation.
 
 The `Channel` class is contained within `channel.h`. `main.cpp` creates a demonstration of several threads adding and removing items from channels under various configurations.
 
