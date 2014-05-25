@@ -2,14 +2,11 @@
 #define CHANNEL_H
 
 #include <cassert>
-
 #include <queue>
 
 #include <mutex>
 #include <condition_variable>
 #include <atomic>
-
-#include <iostream>
 
 template<class T>
 class Channel
@@ -20,19 +17,28 @@ public:
     Channel(FullPushBehavior fullPushBehavior, size_t maxSize = 1);
     Channel(const Channel &other) = delete;
 
-    bool isClosed(void) const;
-    void close(void);
+    //closing the front of the channel will cause all pushes into the channel to return false, permenently
+    //use it when a consumer wants to inform producers that nothing else will be consumed from the channel
+    bool isFrontClosed(void) const;
+    void closeFront(void);
 
-    void push(const T& item);
+    //closing the back of the channel will cause all pops from the channel to return false, permenently
+    //use it when a producer wants to inform consumers that nothing else will be produced into the channel
+    bool isBackClosed(void) const;
+    void closeBack(void);
+
+    //put an item in the channel. returns false if the front of the channel was closed.
+    bool push(const T& item);
+
+    //get an item from the channel and place it in 'result'. if the channel is empty, block until something is added or until the back is closed
+    //returns false when because the channel is empty and the back is closed
     bool pop(T& result);
-
-    //Channel<T>& operator<< (const T& item);
-    //Channel<T>& operator>> (T& item);
 
 private:
     const FullPushBehavior fullPushBehavior;
     const size_t maxSize;
-    std::atomic<bool> _isClosed;
+    std::atomic<bool> _isFrontClosed;
+    std::atomic<bool> _isBackClosed;
 
     std::queue<T> queue;
     std::mutex queueMutex;
@@ -47,45 +53,69 @@ class ChannelClosedException : public std::exception
 
 template<class T>
 Channel<T>::Channel(void)
-    :fullPushBehavior(NEVER_FULL), maxSize(0), _isClosed(false)
+    :fullPushBehavior(NEVER_FULL), maxSize(0), _isFrontClosed(false), _isBackClosed(false)
 {
 
 }
 
 template<class T>
 Channel<T>::Channel(FullPushBehavior fullPushBehavior, size_t maxSize)
-    :fullPushBehavior(fullPushBehavior), maxSize(maxSize), _isClosed(false)
+    :fullPushBehavior(fullPushBehavior), maxSize(maxSize), _isFrontClosed(false), _isBackClosed(false)
 {
     if(fullPushBehavior != NEVER_FULL)
         assert(maxSize > 0);
 }
 
 template<class T>
-bool Channel<T>::isClosed(void) const
+bool Channel<T>::isFrontClosed(void) const
 {
-    return _isClosed.load(std::memory_order_acquire);
+    return _isFrontClosed.load(std::memory_order_acquire);
 }
 
 template<class T>
-void Channel<T>::close(void)
+void Channel<T>::closeFront(void)
 {
-    _isClosed.store(true, std::memory_order_release);
+    std::unique_lock<std::mutex> locker(queueMutex);
+
+    _isFrontClosed.store(true, std::memory_order_release);
+
+    //if anyone is waiting for the "full" condition variable, wake them up so that they know they should stop pushing data
+    fullWait.notify_all();
+}
+
+template<class T>
+bool Channel<T>::isBackClosed(void) const
+{
+    return _isBackClosed.load(std::memory_order_acquire);
+}
+
+template<class T>
+void Channel<T>::closeBack(void)
+{
+    std::unique_lock<std::mutex> locker(queueMutex);
+
+    _isBackClosed.store(true, std::memory_order_release);
 
     //if anyone is waiting for the "empty" condition variable, wake them up so that they know they're not going to get any more data
     emptyWait.notify_all();
 }
 
 template<class T>
-void Channel<T>::push(const T& item)
+bool Channel<T>::push(const T& item)
 {
-    if(isClosed())
+    if(isBackClosed())
     {
         throw ChannelClosedException();
     }
 
+
     std::unique_lock<std::mutex> locker(queueMutex);
 
-    //set up a lambda that returns true if the queue is not full
+    if(isFrontClosed())
+    {
+        return false;
+    }
+
     auto canAddItem = [this]() { return queue.size() < maxSize; };
 
     if(fullPushBehavior == NEVER_FULL)
@@ -100,7 +130,12 @@ void Channel<T>::push(const T& item)
         //block until the queue isn't full anymore
         if(!canAddItem())
         {
-            fullWait.wait(locker, canAddItem);
+            fullWait.wait(locker, [this]() { return isFrontClosed() || queue.size() < maxSize; });
+        }
+
+        if(isFrontClosed())
+        {
+            return false;
         }
         queue.push(item);
 
@@ -130,6 +165,8 @@ void Channel<T>::push(const T& item)
         //wake up anyone who might be waiting
         emptyWait.notify_one();
     }
+
+    return false;
 }
 
 template<class T>
@@ -138,13 +175,13 @@ bool Channel<T>::pop(T& result)
     std::unique_lock<std::mutex> locker(queueMutex);
 
     //if the queue is closed and empty, return false to iindicate that the caller will not recieve a response
-    if(isClosed() && queue.empty())
+    if(isBackClosed() && queue.empty())
         return false;
 
     //if the queue is empty, block!
     if(queue.empty())
     {
-        emptyWait.wait(locker, [this]() { return isClosed() || !queue.empty(); });
+        emptyWait.wait(locker, [this]() { return isBackClosed() || !queue.empty(); });
 
         //if the queue is still empty, it means it's closed and will never get another item,so return false
         if(queue.empty())

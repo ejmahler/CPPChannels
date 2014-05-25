@@ -73,7 +73,7 @@ void performDemo(Channel<int> *dataChannel, Channel<std::string> *outputChannel)
     consumerFuture3.wait();
     consumerFuture4.wait();
 
-    outputChannel->close();
+    outputChannel->closeBack();
     outputFuture.wait();
 }
 
@@ -101,7 +101,7 @@ void producerFunction(Channel<int> *dataChannel, Channel<std::string> *outputCha
 
         outputChannel->push(str(format("[PRODUCER] Just produced item %d") % i));
     }
-    dataChannel->close();
+    dataChannel->closeBack();
 }
 
 void consumerFunction(Channel<int> *dataChannel, Channel<std::string> *outputChannel, int consumerNum)
