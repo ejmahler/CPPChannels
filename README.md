@@ -14,7 +14,7 @@ When a consumer tries to pop an item from an empty channel, the consumer thread 
 
 When the producer is done producing items, it closes the channel (`Channel<T>::closeBack`), indicating to the consumer(s) that no more items will be added to the channel. Any items inside the channel when the channel is closed can still be consumed, but is an error to push an item into a channel whose back is closed.
 
-A channel can have a maximum size, specified in the `Channel `constructor. Trying to push an item onto a full channel resulte in different behavior depending on what you provided for the fullPushBehavior field in the Channel constructor:
+A channel can have a maximum size, specified in the `Channel `constructor. Trying to push an item onto a full channel results in different behavior depending on what you provided for the fullPushBehavior field in the Channel constructor:
 * **BLOCK**: Block the current thread until another thread pops something.
 * **DROP_NEWEST**: Silently discard the newest item in the queue (IE silently discard the item that the caller is currently attempting to push)
 * **DROP_OLDEST**: Silently discard the oldest item in the queue (IE silently discard "front" of the queue)
